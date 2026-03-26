@@ -1,0 +1,29 @@
+Loading model from runs\detect\runs\emergency_vehicle_yolov8s\weights\best.pt...
+
+--- Processing cam1.png ---
+
+image 1/1 C:\Users\SUBHASH GUPTHA\Desktop\CVIP\version3\cam1.png: 864x1280 2 Buss, 300.8ms
+Speed: 8.9ms preprocess, 300.8ms inference, 1.4ms postprocess per image at shape (1, 3, 864, 1280)
+[INFO] Normal traffic flow.
+Saved inference result to evaluated_cam1.png
+
+--- Processing cam2.png ---
+
+image 1/1 C:\Users\SUBHASH GUPTHA\Desktop\CVIP\version3\cam2.png: 736x1280 8 Ambulances, 4 cars, 258.5ms
+Speed: 5.6ms preprocess, 258.5ms inference, 1.0ms postprocess per image at shape (1, 3, 736, 1280)
+[ALERT] EMERGENCY VEHICLE DETECTED (Ambulance) - GRANTING PRIORITY!
+Saved inference result to evaluated_cam2.png
+
+--- Processing cam3.png ---
+
+image 1/1 C:\Users\SUBHASH GUPTHA\Desktop\CVIP\version3\cam3.png: 960x1280 2 Ambulances, 1 Auto, 2 Buss, 1 Fire-engine, 1 car, 343.8ms
+Speed: 6.2ms preprocess, 343.8ms inference, 0.9ms postprocess per image at shape (1, 3, 960, 1280)
+[ALERT] EMERGENCY VEHICLE DETECTED (Ambulance, Fire-engine) - GRANTING PRIORITY!
+Saved inference result to evaluated_cam3.png
+
+--- Processing cam4.png ---
+
+image 1/1 C:\Users\SUBHASH GUPTHA\Desktop\CVIP\version3\cam4.png: 864x1280 2 Ambulances, 4 Autos, 1 Bus, 1 van, 288.8ms
+Speed: 9.2ms preprocess, 288.8ms inference, 0.9ms postprocess per image at shape (1, 3, 864, 1280)
+[ALERT] EMERGENCY VEHICLE DETECTED (Ambulance) - GRANTING PRIORITY!
+Saved inference result to evaluated_cam4.png
