@@ -1,0 +1,13 @@
+train: ./train/images
+val: ./valid/images
+test: ./test/images
+
+nc: 8
+names: ['Ambulance', 'Auto', 'Bus', 'Fire-engine', 'bike', 'car', 'truck', 'van']
+
+roboflow:
+  workspace: aleesia
+  project: aleesiashaloem-2
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/aleesia/aleesiashaloem-2/dataset/1
