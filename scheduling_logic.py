@@ -8,6 +8,7 @@ class TrafficState(Enum):
     PRE_CLEAR = "PRE_CLEAR"
     EV_ACTIVE = "EV_ACTIVE"
     MICRO_BURST = "MICRO_BURST"
+    STARVATION_OVERRIDE = "STARVATION_OVERRIDE"
     COOLDOWN = "COOLDOWN"
 
 class VehicleType(Enum):
@@ -29,6 +30,7 @@ class TrafficController:
         self.BASE_TIME = 5
         self.SECONDS_PER_VEHICLE = 1.5
         self.MAX_BURST = 20
+        self.MAX_WAIT_THRESHOLD = 30  # 30s for demo, 180s for production
         self.TRANSITION_YELLOW = 3
         self.TRANSITION_RED = 2
         
@@ -52,7 +54,19 @@ class TrafficController:
         """Update sensor data for a specific lane."""
         self.lane_data[lane_id]["density"] = density
         self.lane_data[lane_id]["evs"] = evs
-        # Update wait time logic would go here in a real loop
+        
+        # Update wait time
+        now = time.time()
+        elapsed_since_last = now - self.last_update_time
+        # Only update wait_time on the first lane of the cycle to avoid 4x multiplier
+        if lane_id == 1: 
+            self.last_update_time = now
+            
+        phase_of_lane = 0 if lane_id in [1, 3] else 1
+        if phase_of_lane == self.current_phase:
+            self.lane_data[lane_id]["wait_time"] = 0
+        else:
+            self.lane_data[lane_id]["wait_time"] += elapsed_since_last
 
     def get_priority_score(self, lane_id: int) -> float:
         """Calculate DWP score for a lane."""
@@ -75,15 +89,20 @@ class TrafficController:
         phase_a_evs = len(self.lane_data[1]["evs"]) + len(self.lane_data[3]["evs"])
         phase_b_evs = len(self.lane_data[2]["evs"]) + len(self.lane_data[4]["evs"])
         
+        # Check for starvation
+        starved_lanes = [l for l, d in self.lane_data.items() if d["wait_time"] > self.MAX_WAIT_THRESHOLD]
+        
         if phase_a_evs > 0 and phase_b_evs > 0:
             self.state = TrafficState.MICRO_BURST
         elif active_ev_count > 0:
             self.state = TrafficState.EV_ACTIVE
+        elif len(starved_lanes) > 0 and active_ev_count == 0:
+            self.state = TrafficState.STARVATION_OVERRIDE
         elif far_ev_count > 0:
             self.state = TrafficState.PRE_CLEAR
         elif self.state == TrafficState.COOLDOWN and (time.time() - self.phase_start_time > 5):
             self.state = TrafficState.NORMAL
-        elif self.state not in [TrafficState.EV_ACTIVE, TrafficState.MICRO_BURST, TrafficState.PRE_CLEAR]:
+        elif self.state not in [TrafficState.EV_ACTIVE, TrafficState.MICRO_BURST, TrafficState.PRE_CLEAR, TrafficState.STARVATION_OVERRIDE]:
             self.state = TrafficState.NORMAL
 
     def resolve_conflicts(self) -> int:
@@ -126,6 +145,21 @@ class TrafficController:
                 self.switch_phase(target_phase)
             
             self.current_burst_duration = self.calculate_burst_time(target_lane)
+            
+        elif self.state == TrafficState.STARVATION_OVERRIDE:
+            # Grant 10s green to the starved phase
+            starved_lanes = sorted(self.lane_data.items(), key=lambda x: x[1]["wait_time"], reverse=True)
+            target_lane = starved_lanes[0][0]
+            target_phase = 0 if target_lane in [1, 3] else 1
+            
+            if target_phase != self.current_phase:
+                self.switch_phase(target_phase)
+                
+            self.current_burst_duration = 10 # Force minimum clearance
+            if elapsed > self.current_burst_duration:
+                # Reset wait time so it doesn't loop
+                self.lane_data[target_lane]["wait_time"] = 0
+                self.state = TrafficState.NORMAL
             
         elif self.state == TrafficState.EV_ACTIVE:
             # Grant green to the EV phase

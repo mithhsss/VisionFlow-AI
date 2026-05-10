@@ -17,6 +17,8 @@ class VisionFlowSystem:
         print(f"Initializing VisionFlow AI with model: {model_path}")
         self.model = YOLO(model_path)
         self.controller = TrafficController()
+        # Velocity filter history for tracking (Ghost EV prevention)
+        self.ev_history = {1: [], 2: [], 3: [], 4: []}
         
     def process_lane(self, frame, lane_id):
         """Process a single frame for a specific lane and update controller."""
@@ -24,22 +26,52 @@ class VisionFlowSystem:
         
         density = 0
         evs = []
+        current_y_centers = []
         
         for box in results.boxes:
             cls_id = int(box.cls[0])
             # Normalized Y coordinate of bbox center
-            y_center = (box.xyxyn[0][1] + box.xyxyn[0][3]) / 2
+            y_center = float((box.xyxyn[0][1] + box.xyxyn[0][3]) / 2)
             
             if cls_id in VEHICLE_MAP:
-                evs.append(Detection(
-                    cls_id=cls_id,
-                    v_type=VEHICLE_MAP[cls_id],
-                    bbox_y=float(y_center),
-                    lane_id=lane_id
-                ))
+                # --- VELOCITY FILTER ---
+                current_y_centers.append(y_center)
+                is_parked = False
+                
+                # Check history for this lane to find a matching track
+                matched_hist = None
+                for hist in self.ev_history[lane_id]:
+                    if abs(hist[-1] - y_center) < 0.1: # Matches an existing track
+                        matched_hist = hist
+                        break
+                
+                if matched_hist is not None:
+                    matched_hist.append(y_center)
+                    if len(matched_hist) > 10:
+                        matched_hist.pop(0)
+                        # If max variance over last 10 frames is tiny, it's stationary/parked
+                        if max(matched_hist) - min(matched_hist) < 0.02:
+                            is_parked = True
+                else:
+                    self.ev_history[lane_id].append([y_center])
+                    
+                if not is_parked:
+                    evs.append(Detection(
+                        cls_id=cls_id,
+                        v_type=VEHICLE_MAP[cls_id],
+                        bbox_y=y_center,
+                        lane_id=lane_id
+                    ))
             else:
                 # Count other vehicles for density
                 density += 1
+                
+        # Cleanup old tracks (if a track wasn't updated this frame, remove it)
+        new_history = []
+        for hist in self.ev_history[lane_id]:
+            if hist[-1] in current_y_centers:
+                new_history.append(hist)
+        self.ev_history[lane_id] = new_history
                 
         self.controller.update_data(lane_id, density, evs)
         return results.plot()
