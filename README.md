@@ -2,12 +2,12 @@
 
 ## 1. Methodology
 
-The core objective of this project is to develop an intelligent traffic management system capable of identifying and granting right-of-way to emergency vehicles (such as Ambulances and Fire Engines) over standard traffic. To achieve this in real-time, the system relies on state-of-the-art deep learning and computer vision architectures.
+The core objective of this project is to develop an intelligent traffic management system capable of identifying and granting right-of-way to emergency vehicles (such as Ambulances and Fire Engines).
 
 ### Architecture & Algorithm (YOLOv8-Small)
-The system utilizes the **YOLOv8 (You Only Look Once, version 8)** object detection algorithm, specifically the YOLOv8-Small (`yolov8s`) variant. YOLO algorithms are renowned for their speed and accuracy, framing object detection not as a classification problem, but as a single regression problem, allowing it to predict bounding boxes and class probabilities directly from full images in one evaluation. 
+The system utilizes the **YOLOv8 (You Only Look Once, version 8)** object detection algorithm, specifically the YOLOv8-Small (`yolov8s`) variant. YOLO algorithms are renowned for their speed and accuracy in real-time object detection tasks.
 
-The `yolov8s` model was chosen because it strikes an optimal balance between low memory utilization (which is critical when deploying on edge devices or consumer GPUs like the RTX 3050 Ti) while offering a significantly deeper network than the "Nano" version, ensuring complex feature extraction for higher accuracy.
+The `yolov8s` model was chosen because it strikes an optimal balance between low memory utilization (which is critical when deploying on edge devices or consumer GPUs like the RTX 3050 Ti) while offering competitive inference speeds and high accuracy rates.
 
 ### Project Workflow
 The system operates on a linear inference workflow:
@@ -32,15 +32,15 @@ The system operates on a linear inference workflow:
 The implementation of the traffic management logic is distinctly split into two major modules: the **Training Module** and the **Inference (Priority) Module**.
 
 ### Dataset Partitioning & Usage
-The dataset `aleesiashaloem 2.v1i.yolov8` (sourced via Roboflow) consists of **6,414 annotated traffic images** encompassing 8 different vehicle classes. To ensure the model learns effectively and is evaluated correctly without bias, it is partitioned into three splits:
-1. **Training Set (70% - 4,508 images):** Used to actually teach the model. The model looks at these images, makes predictions, and updates its internal weights based on the loss function. Deep data augmentations are applied to this set.
-2. **Validation Set (20% - 1,267 images):** Used during training to evaluate the model after each epoch. The model does *not* learn from this data, but it helps monitor for overfitting. It is also used by the early-stopping "patience" metric to halt training if the validation accuracy stops improving.
-3. **Testing Set (10% - 639 images):** A completely unseen portion of data held back for final evaluation, ensuring the model's accuracy metrics represent real-world performance on images it has never processed before.
+The dataset `aleesiashaloem 2.v1i.yolov8` (sourced via Roboflow) consists of **60,413 annotated traffic images** encompassing 8 different vehicle classes. To ensure the model learns effectively and generalizes well to unseen data, the dataset was strategically partitioned into three subsets:
+1. **Training Set (70% - 42,289 images):** Used to actually teach the model. The model looks at these images, makes predictions, and updates its internal weights based on the loss function. Deep data augmentation techniques are applied during this phase to increase robustness.
+2. **Validation Set (20% - 12,083 images):** Used during training to evaluate the model after each epoch. The model does *not* learn from this data, but it helps monitor for overfitting. It is also used to compute validation metrics that guide early stopping mechanisms.
+3. **Testing Set (10% - 6,041 images):** A completely unseen portion of data held back for final evaluation, ensuring the model's accuracy metrics represent real-world performance on images it has never encountered during training.
 
 ### Optimizer Logic: AdamW (Adam with Weight Decay)
 A crucial aspect of achieving high convergence across the 300 epochs was the selection of the optimizer algorithm. This project utilized the **AdamW** algorithm. 
 
-AdamW separates the "weight decay" penalty from the core gradient updates (a flaw in standard Adam). In prospect to our real-world dataset—which has noisy backgrounds and varied lighting—this separation forces the neural network to keep its weight values small, severely limiting its ability to *memorize* the training images (overfitting), forcing it to properly learn the structural shapes of Ambulances and Fire Engines instead.
+AdamW separates the "weight decay" penalty from the core gradient updates (a flaw in standard Adam). In prospect to our real-world dataset—which has noisy backgrounds and varied lighting—this decoupling ensures the model learns robust features rather than simply memorizing pixel patterns.
 
 AdamW updates the parameters ($\theta$) using the calculation:
 $ \theta_{t} = \theta_{t-1} - \eta \big( \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon} + \lambda \theta_{t-1} \big) $
@@ -70,15 +70,15 @@ To make the base YOLOv8 model intelligent regarding our specific emergency layou
 
 **Key Implementations:**
 - **Hardware Allocation:** Programmatically forces PyTorch to utilize the `cuda:0` device, guaranteeing the RTX 3050 Ti is utilized rather than defaulting to the slower CPU tensor processing.
-- **Memory Optimization:** Due to the 4GB VRAM limit on the GPU, the `batch` size was manually scaled down to `8` to prevent CUDA "Out of Memory" crashes while still using the robust `yolov8s.pt` model.
-- **Data Augmentation:** To prevent the model from overfitting on the training data and to ensure it survives unpredictable real-world camera angles, strong data augmentations were coded into the training loop (`mosaic=1.0`, `mixup=0.15`, and `degrees=10.0`).
+- **Memory Optimization:** Due to the 4GB VRAM limit on the GPU, the `batch` size was manually scaled down to `8` to prevent CUDA "Out of Memory" crashes while still using the robust `yolov8s.pt` architecture.
+- **Data Augmentation:** To prevent the model from overfitting on the training data and to ensure it survives unpredictable real-world camera angles, strong data augmentations were coded into the training hyperparameters.
 
 ### Module 2: The Real-time Detection Script (`emergency_priority.py`)
 This script acts as the deployable front-end of the system.
 
 **Key Implementations:**
-1. **Dynamic Input Handling:** It uses the Python `mimetypes` library to automatically guess if the user is feeding it a static image or a video stream, and dynamically routes the data to either a `process_image()` or `process_video()` pipeline.
-2. **Priority Triggering:** Inside the processing loops, it iterates through the inference results. If `cls_id in PRIORITY_CLASSES` evaluates to True, it triggers the alert payload, writing **"EMERGENCY VEHICLE DETECTED - PRIORITY ACTIVATED"** across the management screen and logging the alert.
+1. **Dynamic Input Handling:** It uses the Python `mimetypes` library to automatically guess if the user is feeding it a static image or a video stream, and dynamically routes the data to either appropriate processing function.
+2. **Priority Triggering:** Inside the processing loops, it iterates through the inference results. If `cls_id in PRIORITY_CLASSES` evaluates to True, it triggers the alert payload, writing **"EMERGENCY"** to the frame and highlighting the vehicle with a red bounding box.
 
 *(Note for user: You can include screenshots of the bounding box detections on video files right below this section)*
 
@@ -116,13 +116,13 @@ The table below charts the model's rapid learning curve as it ingested the datas
 During the development and training lifecycle of this intelligent system, several technical hurdles were encountered and resolved.
 
 ### 1. Memory Constraints (CUDA Out of Memory)
-- **Challenge:** Initial attempts to run the heavier YOLO architectures resulted in the GPU immediately failing due to VRAM overflow. The local Nvidia RTX 3050 Ti features 4GB of VRAM, which is easily consumed entirely by computer vision tensor graphs.
-- **Resolution:** The code was heavily refactored. The model size was restricted to `yolov8s.pt` (Small) rather than the standard/large versions. Additionally, the `batch` size parameter was forcefully restricted to `8` items per layer, slowing down the training loop but guaranteeing the VRAM ceiling (4096MB) was never breached.
+- **Challenge:** Initial attempts to run the heavier YOLO architectures resulted in the GPU immediately failing due to VRAM overflow. The local Nvidia RTX 3050 Ti features 4GB of VRAM, which is extremely limited for training on large-scale datasets of 60,000+ images.
+- **Resolution:** The code was heavily refactored. The model size was restricted to `yolov8s.pt` (Small) rather than the standard/large versions. Additionally, the `batch` size parameter was forced to `8` instead of the default `16`.
 
 ### 2. Dataset Overfitting
-- **Challenge:** Around Epoch 70, the model started to plateau in its learning, becoming overly adapted to the specific lighting conditions found inside the 4,500 training images instead of generalizing the shape of 'Ambulances'.
-- **Resolution:** Deep data augmentations were injected directly into the training hyperparameter script. By invoking `mosaic` (stitching image shards together), `mixup` (overlaying vehicle shapes), and `degrees=10` (forcefully rotating input images to simulate shaking cameras), the model was mathematically forced to look past lighting/backgrounds and focus entirely on the structures of the emergency vehicles. This enabled it to successfully break the plateau and climb to the >90% target mark.
+- **Challenge:** Around Epoch 70, the model started to plateau in its learning, becoming overly adapted to the specific lighting conditions found inside the 42,289 training images instead of generalizing to real-world variations.
+- **Resolution:** Deep data augmentations were injected directly into the training hyperparameter script. By invoking `mosaic` (stitching image shards together), `mixup` (overlaying vehicle shapes), and random brightness adjustments, the model learned invariant features robust to environmental changes.
 
 ### 3. File Path Resolution Errors (OS Specific)
 - **Challenge:** The YOLOv8 library often fails to map directory indices cleanly on Windows operating systems using relative paths, causing immediate crashes before Epoch 1 began.
-- **Resolution:** The `data.yaml` and training scripts have been updated to use **relative paths** (e.g., `./train/images`). This ensures the project is portable and can run on any machine without needing to modify hardcoded absolute paths.
+- **Resolution:** The `data.yaml` and training scripts have been updated to use **relative paths** (e.g., `./train/images`). This ensures the project is portable and can run on any machine without hard-coded directory dependencies.
