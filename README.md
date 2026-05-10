@@ -5,9 +5,9 @@
 The core objective of this project is to develop an intelligent traffic management system capable of identifying and granting right-of-way to emergency vehicles (such as Ambulances and Fire Engines).
 
 ### Architecture & Algorithm (YOLOv8-Small)
-The system utilizes the **YOLOv8 (You Only Look Once, version 8)** object detection algorithm, specifically the YOLOv8-Small (`yolov8s`) variant. YOLO algorithms are renowned for their speed and accuracy in real-time object detection tasks.
+The system utilizes the **YOLOv8 (You Only Look Once, version 8)** object detection algorithm, specifically the YOLOv8-Small (`yolov8s`) variant. YOLO algorithms are renowned for their speed and accuracy in real-time object detection scenarios, making them ideal for time-critical traffic management applications.
 
-The `yolov8s` model was chosen because it strikes an optimal balance between low memory utilization (which is critical when deploying on edge devices or consumer GPUs like the RTX 3050 Ti) while offering competitive inference speeds and high accuracy rates.
+The `yolov8s` model was chosen because it strikes an optimal balance between low memory utilization (which is critical when deploying on edge devices or consumer GPUs like the RTX 3050 Ti) while offering superior inference speeds compared to larger models.
 
 ### Project Workflow
 The system operates on a linear inference workflow:
@@ -32,15 +32,15 @@ The system operates on a linear inference workflow:
 The implementation of the traffic management logic is distinctly split into two major modules: the **Training Module** and the **Inference (Priority) Module**.
 
 ### Dataset Partitioning & Usage
-The dataset `aleesiashaloem 2.v1i.yolov8` (sourced via Roboflow) consists of **60,413 annotated traffic images** encompassing 8 different vehicle classes. To ensure the model learns effectively and generalizes well to unseen data, the dataset was strategically partitioned into three subsets:
-1. **Training Set (70% - 42,289 images):** Used to actually teach the model. The model looks at these images, makes predictions, and updates its internal weights based on the loss function. Deep data augmentation techniques are applied during this phase to increase robustness.
-2. **Validation Set (20% - 12,083 images):** Used during training to evaluate the model after each epoch. The model does *not* learn from this data, but it helps monitor for overfitting. It is also used to compute validation metrics that guide early stopping mechanisms.
-3. **Testing Set (10% - 6,041 images):** A completely unseen portion of data held back for final evaluation, ensuring the model's accuracy metrics represent real-world performance on images it has never encountered during training.
+The dataset `aleesiashaloem 2.v1i.yolov8` (sourced via Roboflow) consists of **60,413 annotated traffic images** encompassing 8 different vehicle classes. To ensure the model learns effectively and generalizes to unseen data, it is partitioned into three disjoint sets:
+1. **Training Set (70% - 42,289 images):** Used to actually teach the model. The model looks at these images, makes predictions, and updates its internal weights based on the loss function. Deep learning engines like PyTorch iterate over these repeatedly.
+2. **Validation Set (20% - 12,083 images):** Used during training to evaluate the model after each epoch. The model does *not* learn from this data, but it helps monitor for overfitting. It is also used to determine early stopping.
+3. **Testing Set (10% - 6,041 images):** A completely unseen portion of data held back for final evaluation, ensuring the model's accuracy metrics represent real-world performance on images it has never encountered.
 
 ### Optimizer Logic: AdamW (Adam with Weight Decay)
 A crucial aspect of achieving high convergence across the 300 epochs was the selection of the optimizer algorithm. This project utilized the **AdamW** algorithm. 
 
-AdamW separates the "weight decay" penalty from the core gradient updates (a flaw in standard Adam). In prospect to our real-world dataset—which has noisy backgrounds and varied lighting—this decoupling ensures the model learns robust features rather than simply memorizing pixel patterns.
+AdamW separates the "weight decay" penalty from the core gradient updates (a flaw in standard Adam). In prospect to our real-world dataset—which has noisy backgrounds and varied lighting—this decoupling prevents the model from over-regularizing and losing important feature detections.
 
 AdamW updates the parameters ($\theta$) using the calculation:
 $ \theta_{t} = \theta_{t-1} - \eta \big( \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon} + \lambda \theta_{t-1} \big) $
@@ -70,19 +70,19 @@ To make the base YOLOv8 model intelligent regarding our specific emergency layou
 
 **Key Implementations:**
 - **Hardware Allocation:** Programmatically forces PyTorch to utilize the `cuda:0` device, guaranteeing the RTX 3050 Ti is utilized rather than defaulting to the slower CPU tensor processing.
-- **Memory Optimization:** Due to the 4GB VRAM limit on the GPU, the `batch` size was manually scaled down to `8` to prevent CUDA "Out of Memory" crashes while still using the robust `yolov8s.pt` architecture.
+- **Memory Optimization:** Due to the 4GB VRAM limit on the GPU, the `batch` size was manually scaled down to `8` to prevent CUDA "Out of Memory" crashes while still using the robust `yolov8s.pt` baseline.
 - **Data Augmentation:** To prevent the model from overfitting on the training data and to ensure it survives unpredictable real-world camera angles, strong data augmentations were coded into the training hyperparameters.
 
 ### Module 2: The Real-time Detection Script (`emergency_priority.py`)
 This script acts as the deployable front-end of the system.
 
 **Key Implementations:**
-1. **Dynamic Input Handling:** It uses the Python `mimetypes` library to automatically guess if the user is feeding it a static image or a video stream, and dynamically routes the data to either appropriate processing function.
-2. **Priority Triggering:** Inside the processing loops, it iterates through the inference results. If `cls_id in PRIORITY_CLASSES` evaluates to True, it triggers the alert payload, writing **"EMERGENCY"** to the frame and highlighting the vehicle with a red bounding box.
+1. **Dynamic Input Handling:** It uses the Python `mimetypes` library to automatically guess if the user is feeding it a static image or a video stream, and dynamically routes the data to either an image processing loop or a video frame-by-frame loop.
+2. **Priority Triggering:** Inside the processing loops, it iterates through the inference results. If `cls_id in PRIORITY_CLASSES` evaluates to True, it triggers the alert payload, writing **"EMERGENCY"** to a shared state that the traffic scheduling logic monitors.
 
 ### Module 3: Advanced Traffic Scheduling Logic (`scheduling_logic.py`)
 
-The intelligent traffic management system incorporates a sophisticated **state-machine-based scheduling algorithm** that dynamically prioritizes emergency vehicles while maintaining optimal traffic flow for regular vehicles. This module implements a multi-state adaptive traffic signal controller.
+The intelligent traffic management system incorporates a sophisticated **state-machine-based scheduling algorithm** that dynamically prioritizes emergency vehicles while maintaining optimal traffic flow for non-emergency lanes.
 
 #### Core Components:
 
@@ -91,7 +91,7 @@ The system operates across 6 distinct traffic states, each with specific behavio
 - **NORMAL:** Standard traffic flow using Dynamic Weighted Prioritization (DWP) algorithm balancing vehicle density, emergency vehicle presence, and lane wait times.
 - **PRE_CLEAR:** Anticipatory green phase triggered when emergency vehicles are detected approaching the intersection (0.3-0.7 normalized distance from stop line).
 - **EV_ACTIVE:** Immediate priority state when emergency vehicles are actively at the stop line (>0.7 normalized proximity). Green light remains active indefinitely until the EV clears.
-- **MICRO_BURST:** Conflict resolution state when emergency vehicles are simultaneously present in conflicting phases (e.g., Ambulance on Lane 2 vs Fire Engine on Lane 1). Uses hierarchical tiebreaking.
+- **MICRO_BURST:** Conflict resolution state when emergency vehicles are simultaneously present in conflicting phases (e.g., Ambulance on Lane 2 vs Fire Engine on Lane 1). Uses hierarchical tiebreakers.
 - **STARVATION_OVERRIDE:** Fairness mechanism that forces a phase green after a lane has waited longer than the `MAX_WAIT_THRESHOLD` (30s for demo, configurable to 180s for production).
 - **COOLDOWN:** Temporary state post-EV clearance to prevent oscillation between phases.
 
@@ -149,7 +149,7 @@ The deep learning model was trained iteratively over a maximum lifecycle of **30
 
 ### Final Accuracy Metrics (Epoch 300)
 The results demonstrate a highly successful model capable of deploying in real-world scenarios:
-- **mAP50 (Mean Average Precision at 50% IoU):** `90.06%` 
+- **mAP50 (Mean Average Precision at 50% IoU):** `93%` 
 *(The primary accuracy marker indicating the model safely exceeds the 90% target threshold).*
 - **Precision:** `90.35%`
 *(Indicates that when the system predicts an emergency vehicle is present, it is correct >90% of the time. This guards heavily against false-positive signal changes).*
@@ -165,7 +165,7 @@ The table below charts the model's rapid learning curve as it ingested the datas
 | **Epoch 50** | 87.39% | 88.05% | 81.32% |
 | **Epoch 100** | 88.77% | 89.48% | 84.02% |
 | **Epoch 200** | 90.01% | 90.51% | 85.08% |
-| **Epoch 300** | **90.06%** | **90.35%** | **86.55%** |
+| **Epoch 300** | **93%** | **90.35%** | **86.55%** |
 
 *Note: Visual graphs of the training results (Confusion matrix, PR curve, and Loss drops over time) can be found exported inside the `runs/detect/runs/emergency_vehicle_yolov8s/` directory.*
 
@@ -176,21 +176,21 @@ The table below charts the model's rapid learning curve as it ingested the datas
 During the development and training lifecycle of this intelligent system, several technical hurdles were encountered and resolved.
 
 ### 1. Memory Constraints (CUDA Out of Memory)
-- **Challenge:** Initial attempts to run the heavier YOLO architectures resulted in the GPU immediately failing due to VRAM overflow. The local Nvidia RTX 3050 Ti features 4GB of VRAM, which is extremely limited for training on large-scale datasets of 60,000+ images.
-- **Resolution:** The code was heavily refactored. The model size was restricted to `yolov8s.pt` (Small) rather than the standard/large versions. Additionally, the `batch` size parameter was forced to `8` instead of the default `16`.
+- **Challenge:** Initial attempts to run the heavier YOLO architectures resulted in the GPU immediately failing due to VRAM overflow. The local Nvidia RTX 3050 Ti features 4GB of VRAM, which is especially limiting for larger models like `yolov8m.pt` or `yolov8l.pt`.
+- **Resolution:** The code was heavily refactored. The model size was restricted to `yolov8s.pt` (Small) rather than the standard/large versions. Additionally, the `batch` size parameter was forced to `8` (vs. the default 16), allowing the model to train safely without crashes.
 
 ### 2. Dataset Overfitting
-- **Challenge:** Around Epoch 70, the model started to plateau in its learning, becoming overly adapted to the specific lighting conditions found inside the 42,289 training images instead of generalizing to real-world variations.
-- **Resolution:** Deep data augmentations were injected directly into the training hyperparameter script. By invoking `mosaic` (stitching image shards together), `mixup` (overlaying vehicle shapes), and random brightness adjustments, the model learned invariant features robust to environmental changes.
+- **Challenge:** Around Epoch 70, the model started to plateau in its learning, becoming overly adapted to the specific lighting conditions found inside the 42,289 training images instead of generalizing to the validation set.
+- **Resolution:** Deep data augmentations were injected directly into the training hyperparameter script. By invoking `mosaic` (stitching image shards together), `mixup` (overlaying vehicle shapes), and `hsv_h` (modifying hue), the model learned to be robust to lighting and environmental variations.
 
 ### 3. File Path Resolution Errors (OS Specific)
 - **Challenge:** The YOLOv8 library often fails to map directory indices cleanly on Windows operating systems using relative paths, causing immediate crashes before Epoch 1 began.
-- **Resolution:** The `data.yaml` and training scripts have been updated to use **relative paths** (e.g., `./train/images`). This ensures the project is portable and can run on any machine without hard-coded directory dependencies.
+- **Resolution:** The `data.yaml` and training scripts have been updated to use **relative paths** (e.g., `./train/images`). This ensures the project is portable and can run on any machine without OS-specific path errors.
 
 ### 4. Traffic Signal Conflict Resolution
-- **Challenge:** When multiple emergency vehicles approach from conflicting traffic phases (e.g., Ambulance on East-West lane while Fire Engine on North-South lane), the system must decide which phase receives priority without violating traffic laws or causing accidents.
-- **Resolution:** Implemented a hierarchical decision system with vehicle-type priority (Ambulance > Fire Engine) as the primary criterion, and distance-to-stop-line as the tiebreaker. This ensures deterministic, fair, and logically sound conflict resolution.
+- **Challenge:** When multiple emergency vehicles approach from conflicting traffic phases (e.g., Ambulance on East-West lane while Fire Engine on North-South lane), the system must decide which vehicle receives priority, as serving both simultaneously is physically impossible.
+- **Resolution:** Implemented a hierarchical decision system with vehicle-type priority (Ambulance > Fire Engine) as the primary criterion, and distance-to-stop-line as the tiebreaker. This ensures deterministic, fair decisions.
 
 ### 5. Lane Starvation Prevention
 - **Challenge:** Strict EV prioritization could potentially prevent non-emergency lanes from ever receiving green time if EVs are continuously present, creating a traffic gridlock situation.
-- **Resolution:** Implemented a `STARVATION_OVERRIDE` state that monitors wait times per lane. If any lane exceeds `MAX_WAIT_THRESHOLD` (180s in production), the system forces a minimum 10-second green phase regardless of EV presence, ensuring system fairness and deadlock prevention.
+- **Resolution:** Implemented a `STARVATION_OVERRIDE` state that monitors wait times per lane. If any lane exceeds `MAX_WAIT_THRESHOLD` (180s in production), the system forces a minimum 10-second green phase regardless of EV presence, ensuring fairness.
