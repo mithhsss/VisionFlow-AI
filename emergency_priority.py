@@ -1,108 +1,119 @@
 import cv2
+import time
 from ultralytics import YOLO
+from scheduling_logic import TrafficController, Detection, VehicleType, TrafficState
 
-# Dictionary for colors (BGR format for OpenCV)
-CLASS_COLORS = {
-    0: (0, 0, 255),    # Ambulance - Red
-    3: (0, 0, 255),    # Fire-engine - Red
+# Mapping YOLO class IDs to our VehicleType hierarchy
+# Assuming YOLOv8 standard COCO classes if not specific
+VEHICLE_MAP = {
+    0: VehicleType.AMBULANCE,    # Our custom class 0
+    3: VehicleType.FIRE_ENGINE,  # Our custom class 3
+    # COCO defaults (standard yolov8n.pt) if used:
+    # 2: car, 5: bus, 7: truck
 }
-DEFAULT_COLOR = (255, 0, 0) # Other vehicles - Blue
 
-# Priority classes (Ambulance, Fire-engine) based on the data.yaml
-PRIORITY_CLASSES = [0, 3] 
-
-def detect_and_prioritize(source_path, model_path='runs/emergency_vehicle_detection/weights/best.pt'):
-    # Load the trained model
-    print(f"Loading model from {model_path}...")
-    try:
-        model = YOLO(model_path)
-    except Exception as e:
-        print(f"Could not load model: {e}")
-        return
-
-    # Check if the source is an image or video/webcam
-    import mimetypes
-    mime_type, _ = mimetypes.guess_type(source_path)
-    
-    if mime_type and mime_type.startswith('image'):
-        process_image(model, source_path)
-    else:
-        # Fallback to video processing if it's not an image or is a camera index
-        process_video(model, source_path)
-
-def process_image(model, image_path):
-    # Run inference on the image (lowered threshold to catch distant vehicles)
-    results = model(image_path, conf=0.15)[0]
-    
-    # Check prioritization
-    priority_detected = False
-    
-    for box in results.boxes:
-        cls_id = int(box.cls[0])
-        if cls_id in PRIORITY_CLASSES:
-            priority_detected = True
-            break
-            
-    if priority_detected:
-        print("\n[ALERT] EMERGENCY VEHICLE DETECTED - GRANTING PRIORITY!\n")
-    else:
-        print("\n[INFO] Normal traffic flow.\n")
+class VisionFlowSystem:
+    def __init__(self, model_path='runs/emergency_vehicle_detection/weights/best.pt'):
+        print(f"Initializing VisionFlow AI with model: {model_path}")
+        self.model = YOLO(model_path)
+        self.controller = TrafficController()
         
-    # Display the image with bounding boxes
-    annotated_frame = results.plot()
-    cv2.imshow("Traffic Management System - Inference", annotated_frame)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
-def process_video(model, source):
-    cap = cv2.VideoCapture(source)
-    if not cap.isOpened():
-        print(f"Error opening source: {source}")
-        return
-
-    print("Press 'q' to quit the video.")
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-            
-        # Run inference on the frame
-        results = model(frame)[0]
+    def process_lane(self, frame, lane_id):
+        """Process a single frame for a specific lane and update controller."""
+        results = self.model(frame, conf=0.25, verbose=False)[0]
         
-        priority_detected = False
+        density = 0
+        evs = []
         
-        # Check for emergency vehicles
         for box in results.boxes:
             cls_id = int(box.cls[0])
-            if cls_id in PRIORITY_CLASSES:
-                priority_detected = True
-                break
-                
-        # If an emergency vehicle is detected, we could hypothetically
-        # trigger a signal change here.
-        if priority_detected:
-            # Draw an alert on the screen
-            cv2.putText(frame, "EMERGENCY VEHICLE DETECTED - PRIORITY ACTIVATED", 
-                        (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
-
-        # Draw the resulting boxes
-        annotated_frame = results.plot()
+            # Normalized Y coordinate of bbox center
+            y_center = (box.xyxyn[0][1] + box.xyxyn[0][3]) / 2
             
-        cv2.imshow("Traffic Management System", annotated_frame)
+            if cls_id in VEHICLE_MAP:
+                evs.append(Detection(
+                    cls_id=cls_id,
+                    v_type=VEHICLE_MAP[cls_id],
+                    bbox_y=float(y_center),
+                    lane_id=lane_id
+                ))
+            else:
+                # Count other vehicles for density
+                density += 1
+                
+        self.controller.update_data(lane_id, density, evs)
+        return results.plot()
+
+    def run_simulation(self, sources: dict):
+        """
+        Run simulation with multiple sources. 
+        sources: {lane_id: source_path}
+        """
+        caps = {l_id: cv2.VideoCapture(src) for l_id, src in sources.items()}
         
-        # Break loop on 'q' press
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        print("\n[SYSTEM] VisionFlow AI Traffic Controller Started")
+        print("Press 'q' to exit simulation.\n")
+        
+        try:
+            while True:
+                frames = {}
+                for l_id, cap in caps.items():
+                    ret, frame = cap.read()
+                    if not ret:
+                        # Restart video if ended
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret, frame = cap.read()
+                    frames[l_id] = frame
 
-    cap.release()
-    cv2.destroyAllWindows()
+                # 1. Update Controller with all lane data
+                annotated_frames = {}
+                for l_id, frame in frames.items():
+                    annotated_frames[l_id] = self.process_lane(frame, l_id)
 
+                # 2. Step the controller
+                self.controller.step()
+                status = self.controller.get_status()
+
+                # 3. Visualization
+                # Create a 2x2 grid for 4 lanes
+                h, w, _ = annotated_frames[1].shape
+                top_row = cv2.hconcat([annotated_frames[1], annotated_frames[2]])
+                bottom_row = cv2.hconcat([annotated_frames[3], annotated_frames[4]])
+                grid = cv2.vconcat([top_row, bottom_row])
+
+                # Overlay Status
+                overlay = grid.copy()
+                cv2.rectangle(overlay, (10, 10), (500, 180), (0, 0, 0), -1)
+                cv2.addWeighted(overlay, 0.6, grid, 0.4, 0, grid)
+                
+                color = (0, 255, 0) if status['state'] == 'NORMAL' else (0, 0, 255)
+                cv2.putText(grid, f"STATE: {status['state']}", (20, 50), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+                cv2.putText(grid, f"PHASE: {status['phase']}", (20, 90), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                cv2.putText(grid, f"BURST: {status['burst_duration']}", (20, 130), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                cv2.putText(grid, f"ELAPSED: {status['elapsed']}", (20, 170), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+                cv2.imshow("VisionFlow AI - Global Traffic Dashboard", cv2.resize(grid, (1280, 720)))
+                
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+        finally:
+            for cap in caps.values():
+                cap.release()
+            cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Test Emergency Prioritization")
-    parser.add_argument('--source', type=str, required=True, help="Path to test image or video (or 0 for webcam)")
+    parser = argparse.ArgumentParser(description="VisionFlow AI Traffic Simulation")
+    parser.add_argument('--source', type=str, required=True, help="Path to test video/image (will be duplicated for 4 lanes)")
     parser.add_argument('--model', type=str, default='runs/emergency_vehicle_detection/weights/best.pt', help="Path to best model weights")
     args = parser.parse_args()
     
-    detect_and_prioritize(args.source, args.model)
+    system = VisionFlowSystem(args.model)
+    
+    # Simulating 4 lanes using the same source for demonstration
+    sources = {1: args.source, 2: args.source, 3: args.source, 4: args.source}
+    system.run_simulation(sources)
