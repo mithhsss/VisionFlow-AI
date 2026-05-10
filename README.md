@@ -80,6 +80,66 @@ This script acts as the deployable front-end of the system.
 1. **Dynamic Input Handling:** It uses the Python `mimetypes` library to automatically guess if the user is feeding it a static image or a video stream, and dynamically routes the data to either appropriate processing function.
 2. **Priority Triggering:** Inside the processing loops, it iterates through the inference results. If `cls_id in PRIORITY_CLASSES` evaluates to True, it triggers the alert payload, writing **"EMERGENCY"** to the frame and highlighting the vehicle with a red bounding box.
 
+### Module 3: Advanced Traffic Scheduling Logic (`scheduling_logic.py`)
+
+The intelligent traffic management system incorporates a sophisticated **state-machine-based scheduling algorithm** that dynamically prioritizes emergency vehicles while maintaining optimal traffic flow for regular vehicles. This module implements a multi-state adaptive traffic signal controller.
+
+#### Core Components:
+
+**State Machine Architecture:**
+The system operates across 6 distinct traffic states, each with specific behavioral logic:
+- **NORMAL:** Standard traffic flow using Dynamic Weighted Prioritization (DWP) algorithm balancing vehicle density, emergency vehicle presence, and lane wait times.
+- **PRE_CLEAR:** Anticipatory green phase triggered when emergency vehicles are detected approaching the intersection (0.3-0.7 normalized distance from stop line).
+- **EV_ACTIVE:** Immediate priority state when emergency vehicles are actively at the stop line (>0.7 normalized proximity). Green light remains active indefinitely until the EV clears.
+- **MICRO_BURST:** Conflict resolution state when emergency vehicles are simultaneously present in conflicting phases (e.g., Ambulance on Lane 2 vs Fire Engine on Lane 1). Uses hierarchical tiebreaking.
+- **STARVATION_OVERRIDE:** Fairness mechanism that forces a phase green after a lane has waited longer than the `MAX_WAIT_THRESHOLD` (30s for demo, configurable to 180s for production).
+- **COOLDOWN:** Temporary state post-EV clearance to prevent oscillation between phases.
+
+**Dynamic Weighted Prioritization (DWP) Score Calculation:**
+```
+Priority_Score = (W_density × Vehicle_Density) + (W_ev × EV_Factor) + (W_wait × Lane_WaitTime)
+```
+Where:
+- **W_density = 2** (higher density = more priority)
+- **EV factor** scales inversely with vehicle type value (Ambulances scored highest)
+- **W_wait = 0.5** (wait time consideration for fairness)
+
+**Hierarchical Conflict Resolution:**
+When multiple emergency vehicles are detected in conflicting phases:
+1. **Primary Tiebreaker:** Vehicle Type Hierarchy (Ambulance > Fire Engine > Police > Other)
+2. **Secondary Tiebreaker:** Distance to stop line (vehicles further away arrived first, prioritized for early clearance)
+
+**Adaptive Burst Duration:**
+The system scales green-light duration based on detected vehicle density:
+```
+Burst_Duration = min(MAX_BURST, BASE_TIME + (density × SECONDS_PER_VEHICLE))
+```
+Where:
+- `BASE_TIME = 5` seconds
+- `SECONDS_PER_VEHICLE = 1.5` seconds
+- `MAX_BURST = 20` seconds
+
+**Safety Transition Intervals:**
+- Yellow phase: 3 seconds
+- All-Red (safety buffer): 2 seconds
+- Ensures safe vehicle clearance during phase transitions
+
+**Key Algorithm Features:**
+- **Real-time density sensing:** Tracks vehicle count per lane from YOLO detections
+- **Bounding box proximity analysis:** Normalized Y-coordinate (0-1) determines EV urgency classification
+- **Wait time fairness:** Prevents indefinite starvation of non-emergency lanes
+- **Conflict detection:** Identifies when EVs approach from opposing phases
+- **Adaptive phase switching:** Dynamically adjusts phases without fixed timing cycles
+
+#### Example Scenario:
+```
+Time 0s: NORMAL state, Phase A (N-S) active
+Time 5s: Ambulance detected on Lane 2 (E-W), distance = 0.5 → PRE_CLEAR triggered
+Time 8s: Ambulance reaches distance 0.75 → EV_ACTIVE triggered, switch to Phase B
+Time 12s: Ambulance clears intersection → COOLDOWN state
+Time 17s: Resume NORMAL state
+```
+
 *(Note for user: You can include screenshots of the bounding box detections on video files right below this section)*
 
 
@@ -126,3 +186,11 @@ During the development and training lifecycle of this intelligent system, severa
 ### 3. File Path Resolution Errors (OS Specific)
 - **Challenge:** The YOLOv8 library often fails to map directory indices cleanly on Windows operating systems using relative paths, causing immediate crashes before Epoch 1 began.
 - **Resolution:** The `data.yaml` and training scripts have been updated to use **relative paths** (e.g., `./train/images`). This ensures the project is portable and can run on any machine without hard-coded directory dependencies.
+
+### 4. Traffic Signal Conflict Resolution
+- **Challenge:** When multiple emergency vehicles approach from conflicting traffic phases (e.g., Ambulance on East-West lane while Fire Engine on North-South lane), the system must decide which phase receives priority without violating traffic laws or causing accidents.
+- **Resolution:** Implemented a hierarchical decision system with vehicle-type priority (Ambulance > Fire Engine) as the primary criterion, and distance-to-stop-line as the tiebreaker. This ensures deterministic, fair, and logically sound conflict resolution.
+
+### 5. Lane Starvation Prevention
+- **Challenge:** Strict EV prioritization could potentially prevent non-emergency lanes from ever receiving green time if EVs are continuously present, creating a traffic gridlock situation.
+- **Resolution:** Implemented a `STARVATION_OVERRIDE` state that monitors wait times per lane. If any lane exceeds `MAX_WAIT_THRESHOLD` (180s in production), the system forces a minimum 10-second green phase regardless of EV presence, ensuring system fairness and deadlock prevention.
